@@ -226,12 +226,29 @@ function buildSettingsKeyboard(userId) {
     ],
   };
 }
+const ALLOWED_IDS = [
+  1400175163,
+  -1001578007378,
+  -1002109878033,
+];
+
+function isAllowed(id) {
+  return ALLOWED_IDS.includes(id);
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(200).json({ ok: true });
 
   const update = req.body;
 
+  const incomingId = update.message?.chat.id
+    || update.callback_query?.message.chat.id
+    || update.channel_post?.chat.id;
+
+  if (!incomingId || !isAllowed(incomingId)) {
+    return res.status(200).json({ ok: true });
+  }
+  
   // Handle callback queries (inline keyboard)
   if (update.callback_query) {
     const { id, from, message, data } = update.callback_query;
