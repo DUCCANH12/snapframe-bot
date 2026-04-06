@@ -402,10 +402,12 @@ async function handleChannelPost(post) {
     const form = new FormData();
     form.append('chat_id', String(chatId));
     form.append('message_id', String(msgId));
-    form.append(
-      'media',
-      JSON.stringify({ type: 'photo', media: 'attach://photo' })
-    );
+    const mediaJson = { type: "photo", media: "attach://photo" };
+    if (post.caption) {
+      mediaJson.caption = post.caption;
+      if (post.caption_entities) mediaJson.caption_entities = post.caption_entities;
+    }
+    form.append("media", JSON.stringify(mediaJson));
     form.append('photo', new Blob([processed], { type: 'image/png' }), 'framed.png');
 
     await fetch(`${API}/editMessageMedia`, { method: 'POST', body: form });
