@@ -3,7 +3,6 @@ import sharp from 'sharp';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-// Gradient presets (mirrors the React app)
 const GRADIENTS = [
   { name: 'Purple Dream', colors: ['#667eea', '#764ba2'] },
   { name: 'Pink Flamingo', colors: ['#f093fb', '#f5576c'] },
@@ -17,21 +16,13 @@ const GRADIENTS = [
   { name: 'Soft Sky', colors: ['#e0c3fc', '#8ec5fc'] },
 ];
 
-const SOLID_COLORS = {
-  white: '#ffffff',
-  dark: '#18181b',
-  slate: '#1e293b',
-  gray: '#f4f4f5',
-};
-
-// In-memory user settings (resets on cold start, good enough for basic use)
 const userSettings = new Map();
 
 function getSettings(userId) {
   return userSettings.get(userId) || {
     padding: 60,
     borderRadius: 20,
-    backgroundType: 'gradient', // 'gradient' | 'solid'
+    backgroundType: 'gradient',
     gradientIndex: 0,
     solidColor: '#ffffff',
     showWindowBar: false,
@@ -66,6 +57,22 @@ async function downloadImage(fileId) {
   return Buffer.from(await fileRes.arrayBuffer());
 }
 
+// Tạo shadow thực sự bằng sharp native blur (librsvg không support feGaussianBlur)
+async function makeShadow(canvasW, canvasH, imgX, imgY, imgW, imgH, borderRadius, blurSigma, opacity) {
+  const shapeSvg = Buffer.from(
+    `<svg width="${canvasW}" height="${canvasH}" xmlns="http://www.w3.org/2000/svg">
+      <rect x="${imgX}" y="${imgY}" width="${imgW}" height="${imgH}"
+            rx="${borderRadius}" ry="${borderRadius}"
+            fill="rgba(0,0,0,${opacity})"/>
+    </svg>`
+  );
+
+  return sharp(shapeSvg)
+    .blur(blurSigma)
+    .png()
+    .toBuffer();
+}
+
 async function processImage(buffer, settings) {
   const { padding, borderRadius, backgroundType, gradientIndex, solidColor, showWindowBar } = settings;
   const gradient = GRADIENTS[gradientIndex % GRADIENTS.length];
@@ -73,7 +80,6 @@ async function processImage(buffer, settings) {
   const meta = await sharp(buffer).metadata();
   let { width, height } = meta;
 
-  // Cap large images to avoid memory issues on Vercel
   const MAX_SIZE = 2000;
   let resizeOpts = {};
   if (width > MAX_SIZE || height > MAX_SIZE) {
@@ -88,18 +94,17 @@ async function processImage(buffer, settings) {
   width = imgMeta.width;
   height = imgMeta.height;
 
-  // Window bar height
   const barHeight = showWindowBar ? 36 : 0;
   const innerHeight = height + barHeight;
 
-  // Rounded mask for image
+  // Rounded mask
   const mask = Buffer.from(
     `<svg width="${width}" height="${innerHeight}" xmlns="http://www.w3.org/2000/svg">
       <rect x="0" y="0" width="${width}" height="${innerHeight}" rx="${borderRadius}" ry="${borderRadius}" fill="white"/>
     </svg>`
   );
 
-  // Window bar SVG
+  // Window bar
   const windowBarSvg = showWindowBar
     ? Buffer.from(
         `<svg width="${width}" height="${barHeight}" xmlns="http://www.w3.org/2000/svg">
@@ -112,11 +117,8 @@ async function processImage(buffer, settings) {
       )
     : null;
 
-  // Composite: bar + image into a rounded frame
   const composites = [];
-  if (windowBarSvg) {
-    composites.push({ input: windowBarSvg, top: 0, left: 0 });
-  }
+  if (windowBarSvg) composites.push({ input: windowBarSvg, top: 0, left: 0 });
   composites.push({ input: imgBuffer, top: barHeight, left: 0 });
 
   const framedContent = await sharp({
@@ -126,17 +128,39 @@ async function processImage(buffer, settings) {
     .png()
     .toBuffer();
 
-  // Apply rounded corners to the content
+  // Apply rounded corners
   const roundedContent = await sharp(framedContent)
     .composite([{ input: mask, blend: 'dest-in' }])
     .png()
     .toBuffer();
 
-  // Canvas size
   const canvasW = width + padding * 2;
   const canvasH = innerHeight + padding * 2;
+  const shadowOffset = Math.round(padding * 0.12);
 
-  // ─── Background SVG (with radial highlight for depth) ───────────────────────
+  // ─── Shadow layer 1: ambient (rộng, mờ) ─────────────────────────────────────
+  const ambientBlur = Math.max(4, Math.round(padding * 0.45));
+  const ambientShadow = await makeShadow(
+    canvasW, canvasH,
+    padding, padding + shadowOffset,
+    width, innerHeight,
+    borderRadius,
+    ambientBlur,
+    0.5
+  );
+
+  // ─── Shadow layer 2: key (hẹp, sắc, dịch thêm xuống) ──────────────────────
+  const keyBlur = Math.max(2, Math.round(padding * 0.12));
+  const keyShadow = await makeShadow(
+    canvasW, canvasH,
+    padding + 2, padding + shadowOffset + 6,
+    width, innerHeight,
+    borderRadius,
+    keyBlur,
+    0.35
+  );
+
+  // ─── Background ──────────────────────────────────────────────────────────────
   let bgSvg;
   if (backgroundType === 'gradient') {
     const [c1, c2] = gradient.colors;
@@ -160,44 +184,20 @@ async function processImage(buffer, settings) {
     </svg>`;
   }
 
-  // ─── Double shadow: ambient (rộng + mờ) + key (hẹp + sắc) ──────────────────
-  const shadowBlur = Math.round(padding * 0.5);
-  const shadowOffset = Math.round(padding * 0.12);
-
-  const shadowSvg = Buffer.from(
-    `<svg width="${canvasW}" height="${canvasH}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <!-- Ambient shadow: rộng, mờ, tạo chiều sâu -->
-        <filter id="shadow1" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="${shadowBlur}"/>
-          <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.45 0"/>
-        </filter>
-        <!-- Key shadow: hẹp, sắc, tạo cảm giác nổi -->
-        <filter id="shadow2" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="${Math.round(shadowBlur * 0.3)}"/>
-          <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.3 0"/>
-        </filter>
-      </defs>
-      <rect x="${padding}" y="${padding + shadowOffset}" width="${width}" height="${innerHeight}"
-            rx="${borderRadius}" ry="${borderRadius}" fill="black" filter="url(#shadow1)"/>
-      <rect x="${padding + 2}" y="${padding + shadowOffset + 4}" width="${width}" height="${innerHeight}"
-            rx="${borderRadius}" ry="${borderRadius}" fill="black" filter="url(#shadow2)"/>
-    </svg>`
-  );
-
   // ─── Thin white border overlay (tạo cảm giác "lift") ────────────────────────
   const borderSvg = Buffer.from(
     `<svg width="${width}" height="${innerHeight}" xmlns="http://www.w3.org/2000/svg">
       <rect x="0.5" y="0.5" width="${width - 1}" height="${innerHeight - 1}"
             rx="${borderRadius}" ry="${borderRadius}"
-            fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1.5"/>
+            fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
     </svg>`
   );
 
-  // ─── Composite tất cả lại ───────────────────────────────────────────────────
+  // ─── Composite: bg → ambient shadow → key shadow → ảnh → border ────────────
   const result = await sharp(Buffer.from(bgSvg))
     .composite([
-      { input: shadowSvg, blend: 'over' },
+      { input: ambientShadow, blend: 'over' },
+      { input: keyShadow, blend: 'over' },
       { input: roundedContent, left: padding, top: padding },
       { input: borderSvg, left: padding, top: padding },
     ])
@@ -274,7 +274,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true });
   }
 
-  // Handle callback queries (inline keyboard)
   if (update.callback_query) {
     const { id, from, message, data } = update.callback_query;
     const userId = from.id;
@@ -315,7 +314,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true });
   }
 
-  // Xử lý ảnh post trong kênh
   if (update.channel_post) {
     await handleChannelPost(update.channel_post);
     return res.status(200).json({ ok: true });
@@ -328,7 +326,6 @@ export default async function handler(req, res) {
   const userId = message.from.id;
   const text = message.text?.trim();
 
-  // /start
   if (text === '/start') {
     await sendMessage(
       chatId,
@@ -346,7 +343,6 @@ Gửi cho mình một ảnh bất kỳ, mình sẽ tự động:
     return res.status(200).json({ ok: true });
   }
 
-  // /settings
   if (text === '/settings') {
     const s = getSettings(userId);
     const grad = GRADIENTS[s.gradientIndex % GRADIENTS.length];
@@ -359,7 +355,6 @@ Gửi cho mình một ảnh bất kỳ, mình sẽ tự động:
     return res.status(200).json({ ok: true });
   }
 
-  // /help
   if (text === '/help') {
     await sendMessage(
       chatId,
@@ -379,14 +374,12 @@ Gửi cho mình một ảnh bất kỳ, mình sẽ tự động:
     return res.status(200).json({ ok: true });
   }
 
-  // Photo message
   if (message.photo || message.document?.mime_type?.startsWith('image/')) {
     await sendTyping(chatId);
 
     try {
       let fileId;
       if (message.photo) {
-        // Lấy ảnh chất lượng cao nhất
         fileId = message.photo[message.photo.length - 1].file_id;
       } else {
         fileId = message.document.file_id;
@@ -408,7 +401,6 @@ Gửi cho mình một ảnh bất kỳ, mình sẽ tự động:
     return res.status(200).json({ ok: true });
   }
 
-  // Unhandled
   if (text && !text.startsWith('/')) {
     await sendMessage(chatId, '📸 Gửi ảnh cho mình nhé! Dùng /settings để tùy chỉnh style.');
   }
