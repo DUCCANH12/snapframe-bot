@@ -139,25 +139,25 @@ async function processImage(buffer, settings) {
   const shadowOffset = Math.round(padding * 0.12);
 
   // ─── Shadow layer 1: ambient (rộng, mờ) ─────────────────────────────────────
-  const ambientBlur = Math.max(4, Math.round(padding * 0.45));
+  const ambientBlur = Math.max(4, Math.round(padding * 1.2));  // gốc 0.45 
   const ambientShadow = await makeShadow(
     canvasW, canvasH,
     padding, padding + shadowOffset,
     width, innerHeight,
     borderRadius,
     ambientBlur,
-    0.5
+    0.35   // gốc 0.5 
   );
 
   // ─── Shadow layer 2: key (hẹp, sắc, dịch thêm xuống) ──────────────────────
-  const keyBlur = Math.max(2, Math.round(padding * 0.12));
+  const keyBlur = Math.max(2, Math.round(padding * 0.15));  // gốc 0.12 
   const keyShadow = await makeShadow(
     canvasW, canvasH,
-    padding + 2, padding + shadowOffset + 6,
+    padding + 1, padding + shadowOffset + 1,  // gốc padding + 2, padding + shadowOffset + 6,
     width, innerHeight,
     borderRadius,
     keyBlur,
-    0.35
+    0.25   // gốc  0.35 
   );
 
   // ─── Background ──────────────────────────────────────────────────────────────
