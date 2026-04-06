@@ -273,6 +273,12 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true });
   }
 
+  // Xử lý ảnh post trong kênh
+  if (update.channel_post) {
+    await handleChannelPost(update.channel_post);
+    return res.status(200).json({ ok: true });
+  }
+
   const message = update.message;
   if (!message) return res.status(200).json({ ok: true });
 
@@ -366,4 +372,44 @@ Gửi cho mình một ảnh bất kỳ, mình sẽ tự động:
   }
 
   return res.status(200).json({ ok: true });
+}
+
+async function handleChannelPost(post) {
+  if (!post.photo && !post.document?.mime_type?.startsWith('image/')) return;
+
+  const chatId = post.chat.id;
+  const msgId = post.message_id;
+
+  try {
+    let fileId;
+    if (post.photo) {
+      fileId = post.photo[post.photo.length - 1].file_id;
+    } else {
+      fileId = post.document.file_id;
+    }
+
+    const imgBuffer = await downloadImage(fileId);
+    const processed = await processImage(imgBuffer, {
+      padding: 60,
+      borderRadius: 20,
+      backgroundType: 'gradient',
+      gradientIndex: 0,
+      solidColor: '#ffffff',
+      showWindowBar: false,
+    });
+
+    // editMessageMedia yêu cầu media JSON + file attach
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    form.append('message_id', String(msgId));
+    form.append(
+      'media',
+      JSON.stringify({ type: 'photo', media: 'attach://photo' })
+    );
+    form.append('photo', new Blob([processed], { type: 'image/png' }), 'framed.png');
+
+    await fetch(`${API}/editMessageMedia`, { method: 'POST', body: form });
+  } catch (err) {
+    console.error('Channel post error:', err);
+  }
 }
