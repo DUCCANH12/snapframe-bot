@@ -428,7 +428,7 @@ async function handleChannelPost(post) {
       borderRadius: 24,
       backgroundType: 'solid',
       gradientIndex: 0,
-      solidColor: '#94a3b8',
+      solidColor: '#ffffff',
       showWindowBar: false,
     });
 
