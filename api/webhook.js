@@ -136,7 +136,7 @@ async function processImage(buffer, settings) {
   const canvasW = width + padding * 2;
   const canvasH = innerHeight + padding * 2;
 
-  // Background SVG
+  // ─── Background SVG (with radial highlight for depth) ───────────────────────
   let bgSvg;
   if (backgroundType === 'gradient') {
     const [c1, c2] = gradient.colors;
@@ -146,8 +146,13 @@ async function processImage(buffer, settings) {
           <stop offset="0%" stop-color="${c1}"/>
           <stop offset="100%" stop-color="${c2}"/>
         </linearGradient>
+        <radialGradient id="hl" cx="30%" cy="15%" r="60%">
+          <stop offset="0%" stop-color="rgba(255,255,255,0.18)"/>
+          <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+        </radialGradient>
       </defs>
       <rect width="${canvasW}" height="${canvasH}" fill="url(#g)"/>
+      <rect width="${canvasW}" height="${canvasH}" fill="url(#hl)"/>
     </svg>`;
   } else {
     bgSvg = `<svg width="${canvasW}" height="${canvasH}" xmlns="http://www.w3.org/2000/svg">
@@ -155,27 +160,46 @@ async function processImage(buffer, settings) {
     </svg>`;
   }
 
-  // Drop shadow effect: create a slightly larger blurred version under the image
-  const shadowBlur = Math.round(padding * 0.3);
-  const shadowOffset = Math.round(padding * 0.08);
+  // ─── Double shadow: ambient (rộng + mờ) + key (hẹp + sắc) ──────────────────
+  const shadowBlur = Math.round(padding * 0.5);
+  const shadowOffset = Math.round(padding * 0.12);
 
   const shadowSvg = Buffer.from(
     `<svg width="${canvasW}" height="${canvasH}" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <filter id="shadow">
+        <!-- Ambient shadow: rộng, mờ, tạo chiều sâu -->
+        <filter id="shadow1" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="${shadowBlur}"/>
-          <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.35 0"/>
+          <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.45 0"/>
+        </filter>
+        <!-- Key shadow: hẹp, sắc, tạo cảm giác nổi -->
+        <filter id="shadow2" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="${Math.round(shadowBlur * 0.3)}"/>
+          <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.3 0"/>
         </filter>
       </defs>
-      <rect x="${padding}" y="${padding + shadowOffset}" width="${width}" height="${innerHeight}" 
-            rx="${borderRadius}" ry="${borderRadius}" fill="black" filter="url(#shadow)"/>
+      <rect x="${padding}" y="${padding + shadowOffset}" width="${width}" height="${innerHeight}"
+            rx="${borderRadius}" ry="${borderRadius}" fill="black" filter="url(#shadow1)"/>
+      <rect x="${padding + 2}" y="${padding + shadowOffset + 4}" width="${width}" height="${innerHeight}"
+            rx="${borderRadius}" ry="${borderRadius}" fill="black" filter="url(#shadow2)"/>
     </svg>`
   );
 
+  // ─── Thin white border overlay (tạo cảm giác "lift") ────────────────────────
+  const borderSvg = Buffer.from(
+    `<svg width="${width}" height="${innerHeight}" xmlns="http://www.w3.org/2000/svg">
+      <rect x="0.5" y="0.5" width="${width - 1}" height="${innerHeight - 1}"
+            rx="${borderRadius}" ry="${borderRadius}"
+            fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1.5"/>
+    </svg>`
+  );
+
+  // ─── Composite tất cả lại ───────────────────────────────────────────────────
   const result = await sharp(Buffer.from(bgSvg))
     .composite([
       { input: shadowSvg, blend: 'over' },
       { input: roundedContent, left: padding, top: padding },
+      { input: borderSvg, left: padding, top: padding },
     ])
     .png()
     .toBuffer();
@@ -226,6 +250,7 @@ function buildSettingsKeyboard(userId) {
     ],
   };
 }
+
 const ALLOWED_IDS = [
   1400175163,
   -1001578007378,
@@ -248,7 +273,7 @@ export default async function handler(req, res) {
   if (!incomingId || !isAllowed(incomingId)) {
     return res.status(200).json({ ok: true });
   }
-  
+
   // Handle callback queries (inline keyboard)
   if (update.callback_query) {
     const { id, from, message, data } = update.callback_query;
@@ -415,7 +440,6 @@ async function handleChannelPost(post) {
       showWindowBar: false,
     });
 
-    // editMessageMedia yêu cầu media JSON + file attach
     const form = new FormData();
     form.append('chat_id', String(chatId));
     form.append('message_id', String(msgId));
