@@ -424,8 +424,8 @@ async function handleChannelPost(post) {
 
     const imgBuffer = await downloadImage(fileId);
     const processed = await processImage(imgBuffer, {
-      padding: 30,
-      borderRadius: 24,
+      padding: 25,
+      borderRadius: 20,
       backgroundType: 'solid',
       gradientIndex: 0,
       solidColor: '#ffffff',
